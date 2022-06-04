@@ -834,6 +834,19 @@ def block_pruning(args, weight, percent, return_block_sums=False):
 
     block = args.sp_admm_block
     block = eval(block)
+    block = list(block)
+
+
+    #print(block)
+    if block[0] < 1.0:
+        block[0] = int(weight2d.shape[0] * block[0])
+    if block[1] < 1.0:
+        block[1] = int(weight2d.shape[1] * block[1])
+    #print(block)
+    #input("?")
+
+
+
     row_pad_num = (block[0] - weight2d.shape[0] % block[0]) % block[0]
     col_pad_num = (block[1] - weight2d.shape[1] % block[1]) % block[1]
     new_weight2d = np.zeros((weight2d.shape[0]+row_pad_num, weight2d.shape[1]+col_pad_num))
@@ -1040,7 +1053,7 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
         weight = weight.reshape(shape)
         above_threshold = above_threshold.reshape(shape)
         return torch.from_numpy(above_threshold).cuda(), torch.from_numpy(weight).cuda()
-
+    
     elif args.sp_admm_sparsity_type == "hybrid_block":
         print("using hybrid block pruning...")
         shape = weight.shape
