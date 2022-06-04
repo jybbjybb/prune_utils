@@ -1053,7 +1053,52 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
         weight = weight.reshape(shape)
         above_threshold = above_threshold.reshape(shape)
         return torch.from_numpy(above_threshold).cuda(), torch.from_numpy(weight).cuda()
-    
+
+    elif (args.sp_admm_sparsity_type == "block_fraction_in_non_diagonal"):
+        print("using block_in_non_diagonal pruning...")
+        shape = weight.shape
+        weight2d = copy.copy(weight)
+        block = args.sp_admm_block
+        # args.sp_admm_block has the form (1, x) or (y, 1)
+        # x, and y indicate how many Big Blocks in the matrix (#nodes)
+        # each block sparse pattern is then (1, #col/x) or (#row/y, 1)
+        # But diagonal blocks are not prune
+        block = eval(block)
+        block = list(block)
+
+        weight2d_copy = copy.copy(weight)
+
+        num_nodes = max(block[0], block[1])
+
+        assert weight2d.shape[0] % block[0] == 0, 'Row number not divisible'
+        assert weight2d.shape[1] % block[1] == 0, 'Column number not divisible'
+
+        unit_rec = np.ones((weight2d.shape[0]//num_nodes, weight2d.shape[1]//num_nodes))
+        diag_mask = np.kron(np.eye(num_nodes,dtype=int),unit_rec) # r is number of repeats
+        #weight2d_copy_diagonal_only = weight2d_copy * diag_mask
+        weight2d +=  diag_mask*1000
+        #print(weight2d[45:52,190:197], diag_mask.shape)
+        #print(weight2d_copy[45:52,190:197], diag_mask.shape)
+        #input("?")
+        if block[0] > 1: # prune vertical block pattern, #nodes = #rows/block[0]
+            # Set the diagonal to a large value to avoid being pruned
+            block[0] = weight2d.shape[0]//block[0]
+        elif block[1] > 1:
+            block[1] = weight2d.shape[1]//block[1]
+
+        args.sp_admm_block='({},{})'.format(block[0],block[1])
+
+        mask2d, masked_w =  block_pruning(args, weight2d, percent)
+
+        masked_w -= diag_mask*1000
+
+        #print(masked_w)
+        #np.savetxt("foo.csv", np.abs(masked_w), delimiter=" ")
+        #input("?")
+
+        return torch.from_numpy(mask2d), torch.from_numpy(masked_w)
+
+
     elif args.sp_admm_sparsity_type == "hybrid_block":
         print("using hybrid block pruning...")
         shape = weight.shape
