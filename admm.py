@@ -805,7 +805,7 @@ def four_two_pruning(args, weight, pattern='hvb', percent=0.5):
 
 
 
-def block_pruning(args, weight, percent, return_block_sums=False):
+def block_pruning(args, weight, percent, return_block_sums=False, block_size=None):
     print("using block pruning...")
     shape = weight.shape
     weight2d = copy.copy(weight)
@@ -831,11 +831,12 @@ def block_pruning(args, weight, percent, return_block_sums=False):
 
 
     assert len(weight2d.shape) == 2, "Now only support 2d matrices"
-
-    block = args.sp_admm_block
+    if block_size is None: #No override on block size, use args passed in
+        block = args.sp_admm_block
+    else: # Use explicit block size if needed
+        block = block_size
     block = eval(block)
     block = list(block)
-
 
     #print(block)
     if block[0] < 1.0:
@@ -1058,6 +1059,7 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
         print("using block_in_non_diagonal pruning...")
         shape = weight.shape
         weight2d = copy.copy(weight)
+
         block = args.sp_admm_block
         # args.sp_admm_block has the form (1, x) or (y, 1)
         # x, and y indicate how many Big Blocks in the matrix (#nodes)
@@ -1066,35 +1068,69 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
         block = eval(block)
         block = list(block)
 
-        weight2d_copy = copy.copy(weight)
+        if len(shape) == 2:
+            # assume it is MN format
+            pass
+        elif len(shape) == 4:
+            # assume it is CoCIKhKw format
+            # first serialize KhKw to one dimension
+            co, ci, kh, kw = weight2d.shape
+            weight2d = weight2d.reshape([co, ci, kh * kw])
+            # convert from CoCiKhKw to CoKhKwCi format
+            # weight2d = np.moveaxis(weight2d, 1, -1) # No need for this step because we need to have the 3x3 kernal as consecutive indices in weight2d
+            # merge Ci, Kh, Kw dimension
+            weight2d = weight2d.reshape([co, ci * kh * kw])
+        elif len(shape) == 3:
+            co, ci, kl = weight2d.shape
+            #weight2d = np.moveaxis(weight2d, 1, -1)
+            weight2d = weight2d.reshape([co, ci * kl])
+        else:
+            assert False, "matrix dim = {}, not equal to 2 (MM), 3 (1d Conv), or 4 (2d Conv)!".format(len(shape))
 
         num_nodes = max(block[0], block[1])
 
-        assert weight2d.shape[0] % block[0] == 0, 'Row number not divisible'
-        assert weight2d.shape[1] % block[1] == 0, 'Column number not divisible'
+        assert weight2d.shape[0] % block[0] == 0, 'Row number {} not divisible by {}'.format(weight2d.shape[0], block[0])
+        assert weight2d.shape[1] % block[1] == 0, 'Column number {} not divisible by {}'.format(weight2d.shape[1], block[1])
 
         unit_rec = np.ones((weight2d.shape[0]//num_nodes, weight2d.shape[1]//num_nodes))
-        diag_mask = np.kron(np.eye(num_nodes,dtype=int),unit_rec) # r is number of repeats
-        #weight2d_copy_diagonal_only = weight2d_copy * diag_mask
-        weight2d +=  diag_mask*1000
-        #print(weight2d[45:52,190:197], diag_mask.shape)
-        #print(weight2d_copy[45:52,190:197], diag_mask.shape)
-        #input("?")
+        diag_mask = np.kron(np.eye(num_nodes,dtype=int),unit_rec) # repeat num_nodes times
+
+        weight2d +=  diag_mask*1000 # make sure the diagonal is large
+
         if block[0] > 1: # prune vertical block pattern, #nodes = #rows/block[0]
-            # Set the diagonal to a large value to avoid being pruned
             block[0] = weight2d.shape[0]//block[0]
         elif block[1] > 1:
             block[1] = weight2d.shape[1]//block[1]
 
-        args.sp_admm_block='({},{})'.format(block[0],block[1])
+        # For conv2D, 4D weight only
+        if len(shape) == 4:
+            block[1] = shape[2] * shape[3]
 
-        mask2d, masked_w =  block_pruning(args, weight2d, percent)
+        b_size='({},{})'.format(block[0],block[1])
+
+        mask2d, masked_w =  block_pruning(args, weight2d, percent, block_size=b_size)
 
         masked_w -= diag_mask*1000
 
+        
         #print(masked_w)
         #np.savetxt("foo.csv", np.abs(masked_w), delimiter=" ")
         #input("?")
+
+        # Back to 4D tensor if needed
+        if len(shape) == 2:
+            pass
+        elif len(shape) == 4:
+            # assume it is CoCIKhKw format
+            co, ci, kh, kw = weight.shape
+            masked_w = masked_w.reshape([co, ci, kh, kw])
+        elif len(shape) == 3:
+            co, ci, kl = weight.shape
+            masked_w = masked_w.reshape([co, ci, kl])
+
+
+        #assert weight.shape == mask2d.shape, "Mask shape not equal to weights shape!"
+        mask2d = masked_w > 0.0
 
         return torch.from_numpy(mask2d), torch.from_numpy(masked_w)
 
