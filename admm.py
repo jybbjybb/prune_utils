@@ -1095,7 +1095,9 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
         unit_rec = np.ones((weight2d.shape[0]//num_nodes, weight2d.shape[1]//num_nodes))
         diag_mask = np.kron(np.eye(num_nodes,dtype=int),unit_rec) # repeat num_nodes times
 
-        weight2d +=  diag_mask*1000 # make sure the diagonal is large
+        weight2d += (2 * np.random.randint(2,size=weight2d.shape)-1)*0.00001
+
+        weight2d +=  diag_mask*100 # make sure the diagonal is large
 
         if block[0] > 1: # prune vertical block pattern, #nodes = #rows/block[0]
             block[0] = weight2d.shape[0]//block[0]
@@ -1110,9 +1112,9 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
 
         mask2d, masked_w =  block_pruning(args, weight2d, percent, block_size=b_size)
 
-        masked_w -= diag_mask*1000
+        masked_w -= diag_mask*100
 
-        
+
         #print(masked_w)
         #np.savetxt("foo.csv", np.abs(masked_w), delimiter=" ")
         #input("?")
