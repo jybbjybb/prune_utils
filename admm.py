@@ -1085,7 +1085,7 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
             #weight2d = np.moveaxis(weight2d, 1, -1)
             weight2d = weight2d.reshape([co, ci * kl])
         else:
-            assert False, "matrix dim = {}, not equal to 2 (MM), 3 (1d Conv), or 4 (2d Conv)!".format(len(shape))
+            assert False, "{} matrix dim = {}, not equal to 2 (MM), 3 (1d Conv), or 4 (2d Conv)!".format(name, len(shape))
 
         num_nodes = max(block[0], block[1])
 
