@@ -1088,6 +1088,37 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
 
         num_nodes = max(block[0], block[1])
 
+        if 'qkv' in name: #handle qkv matrix in DeiT
+            #import scipy.io
+            #print(name, weight2d.shape)
+            assert weight2d.shape[0] % 3 ==0 ,"qkv matrix dimension not divisible by 3!"
+            qkv_weight2d = view_as_windows(weight2d, (weight2d.shape[0]//3, weight2d.shape[1]), step=(weight2d.shape[0]//3,weight2d.shape[0]//3))
+            #print(qkv_weight2d.shape)
+            block[0] = qkv_weight2d.shape[0]/3/block[0]
+            for m in [0,1,2]:
+                mm = qkv_weight2d[m,0]
+                #print(mm.shape)
+                unit_rec = np.ones((mm.shape[0]//num_nodes, mm.shape[1]//num_nodes))
+                diag_mask = np.kron(np.eye(num_nodes,dtype=int),unit_rec) # repeat num_nodes times
+                max_v = 10#np.max(np.abs(mm))
+                #mm += (2 * np.random.randint(2,size=mm.shape)-1)*0.0001
+                mm +=  diag_mask*max_v # make sure the diagonal is large
+                # prune vertical block pattern, #nodes = #rows/block[0]
+                b_size='({},{})'.format(block[0],block[1])
+                #print(b_size)
+                mask2d, masked_w =  block_pruning(args, mm, percent, block_size=b_size)
+                masked_w -= diag_mask*max_v
+                #scipy.io.savemat('masked_w.mat', {'masked_w':masked_w})
+                #input("?")
+                weight2d[m*mm.shape[0]:(m+1)*mm.shape[0],:] = masked_w
+                #print(masked_w.shape)
+                #print( (0.0+np.sum(masked_w!=0))/masked_w.shape[0]/masked_w.shape[1])
+            mask2d = weight2d > 0.0
+
+            #scipy.io.savemat('qkv_after.mat', {'after':weight2d})
+            #input("?")
+            return torch.from_numpy(mask2d), torch.from_numpy(weight2d)
+
         assert weight2d.shape[0] % block[0] == 0, 'Row number {} not divisible by {}'.format(weight2d.shape[0], block[0])
         assert weight2d.shape[1] % block[1] == 0, 'Column number {} not divisible by {}'.format(weight2d.shape[1], block[1])
 
