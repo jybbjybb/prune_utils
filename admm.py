@@ -1125,8 +1125,10 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
         unit_rec = np.ones((weight2d.shape[0]//num_nodes, weight2d.shape[1]//num_nodes))
         diag_mask = np.kron(np.eye(num_nodes,dtype=int),unit_rec) # repeat num_nodes times
 
+        weight2d_copy = copy.copy(weight2d)
+
         max_v = np.max(np.abs(weight2d))
-        weight2d += (2 * np.random.randint(2,size=weight2d.shape)-1)*0.0001
+        #weight2d += (2 * np.random.randint(2,size=weight2d.shape)-1)*0.0001
 
         weight2d +=  diag_mask*max_v # make sure the diagonal is large
 
@@ -1143,12 +1145,14 @@ def weight_pruning(args, configs, name, w, prune_ratio, mask_fixed_params=None):
 
         mask2d, masked_w =  block_pruning(args, weight2d, percent, block_size=b_size)
 
-
         masked_w -= diag_mask*max_v
 
-        #print(masked_w)
-        #np.savetxt("foo.csv", np.abs(masked_w), delimiter=" ")
-        #input("?")
+        masked_w = weight2d_copy * diag_mask + masked_w * (1 - diag_mask)
+
+        #if 'layer1.0.conv2.weight' in name:
+        #    from scipy.io import savemat
+        #    savemat("./tmp/matlab_matrix.mat", {"w":masked_w})
+        #    exit()
 
         # Back to 4D tensor if needed
         if len(shape) == 2:
