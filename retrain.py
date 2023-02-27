@@ -1,5 +1,6 @@
 
 import torch
+from torch.autograd import Function
 import logging
 import sys
 import os
@@ -35,7 +36,10 @@ def prune_parse_arguments(parser):
                         help="Use global magnitude to prune models")
     parser.add_argument('--sp-pre-defined-mask-dir', type=str, default=None,
                         help="using another sparse model to init sparse mask")
-
+    parser.add_argument('--retrain-quantized-bits', type=int, default=-1,
+                    help="number of bit of quantized weights")
+    parser.add_argument('--retrain-quantized-method', type=str, default='minmax_uniform_symmetric',
+                    help="quantization method")
 
 class Retrain(object):
     def __init__(self, args, model, logger=None, pre_defined_mask=None, seed=None):
@@ -62,6 +66,7 @@ class Retrain(object):
 
         self.masks = {}
         self.masked_layers = {}
+        self.quantized_layers = {}
         self.configs, self.prune_ratios = utils_pr.load_configs(model, args.sp_config_file, self.logger)
 
         if "masked_layers" in self.configs:
@@ -70,6 +75,8 @@ class Retrain(object):
             for name, W in (self.model.named_parameters()):
                 self.masked_layers[utils_pr.canonical_name(name)] = None
 
+        if "quantized_layers" in self.configs:
+            self.quantized_layers = self.configs['quantized_layers']
 
         if "fixed_layers" in self.configs:
             self.fixed_layers = self.configs['fixed_layers']
@@ -110,7 +117,79 @@ class Retrain(object):
                     dtype = W.dtype
                     W.mul_((self.masks[name] != 0).type(dtype))
                     # W.data = (W * (self.masks[name] != 0).type(dtype)).type(dtype)
-                    pass
+
+        class Q(Function):
+            @staticmethod
+            def forward(ctx,input,bit):
+                scale = float(2**bit-1)
+                return torch.round(input * scale)/scale
+            @staticmethod
+            def backward(ctx,grad_output):
+                return grad_output, None, None
+
+        with torch.no_grad():
+            for name, W in (self.model.named_parameters()):
+                name = utils_pr.canonical_name(name)
+                if self.args.retrain_quantized_bits > 0 and (name in self.quantized_layers):
+                    dtype = W.dtype
+                    if self.quantized_layers[name] >= 1:
+                        nbit = self.quantized_layers[name] # yaml file has high priority
+                    else:
+                        nbit = self.args.retrain_quantized_bits
+                    method = self.args.retrain_quantized_method
+                    #'stdscaled_uniform_symmetric' #'kmeans1d_uniform_symmetric' #'kmeans1d'
+                    if method == 'minmax_uniform_symmetric':
+                        sign = torch.sign(W)
+                        scale = torch.max(torch.abs(W))
+                        WS = torch.abs(W) / scale
+                        range = float(2**(nbit-1) - 1)
+                        WI = torch.round(WS * range)
+                        #print(WI.detach().cpu().numpy()[0,0])
+                        WQ = WI / range
+                    elif method == 'kmeans1d_uniform_symmetric':
+                        import kmeans1d
+                        x = W.detach().cpu().numpy().flatten()
+                        k = 2 ** nbit
+                        clusters, centroids = kmeans1d.cluster(x, k)
+                        print(name, centroids)
+
+                        sign = torch.sign(W)
+                        scale = torch.max(torch.abs(torch.from_numpy(np.array(centroids)))).cuda()
+                        WS = torch.abs(W) / scale
+                        WS = torch.clamp(WS,0,1)
+                        range = float(2**(nbit-1) - 1)
+                        WI = torch.round(WS * range)
+                        #print(WI.detach().cpu().numpy()[0,0])
+                        WQ = WI / range
+                    elif method == 'kmeans1d':
+                        import kmeans1d
+                        x = W.detach().cpu().numpy().flatten()
+                        k = 2 ** nbit
+                        clusters, centroids = kmeans1d.cluster(x, k)
+                        print(clusters)
+                        input("?")
+                    elif method == 'stdscaled_uniform_symmetric':
+                        sign = torch.sign(W)
+                        std = torch.std(W)
+                        factor = 25.0
+                        scale = torch.min(torch.max(torch.abs(W)), std * factor)
+                        WS = torch.abs(W) / scale
+                        WS = torch.clamp(WS,0,1)
+                        range = float(2**(nbit-1) - 1)
+                        WI = torch.round(WS * range)
+                        #print(WI.detach().cpu().numpy()[0,0])
+                        WQ = WI / range
+
+
+                    #WQ = Q.apply(WS, nbit-1)
+                    W.sub_(W)
+                    #print(W[0,0])
+                    #print(W.detach().cpu().numpy()[0,0])
+                    W.add_(WQ.type(dtype)*scale*sign)
+                    #print(W[0,0])
+                    #print(W.detach().cpu().numpy()[0,0])
+
+
 
     def apply_masks_on_grads(self):
         with torch.no_grad():

@@ -110,6 +110,7 @@ def prune_apply_masks():
         prune_algo.apply_masks()
     if retrain:
         retrain.apply_masks()
+
     else:
         return
         assert(False)
