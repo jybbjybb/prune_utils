@@ -132,7 +132,9 @@ class Retrain(object):
                 name = utils_pr.canonical_name(name)
                 if self.args.retrain_quantized_bits > 0 and (name in self.quantized_layers):
                     dtype = W.dtype
-                    if self.quantized_layers[name] >= 1:
+                    if self.quantized_layers[name] is None:
+                        nbit = self.args.retrain_quantized_bits
+                    elif self.quantized_layers[name] >= 1:
                         nbit = self.quantized_layers[name] # yaml file has high priority
                     else:
                         nbit = self.args.retrain_quantized_bits
