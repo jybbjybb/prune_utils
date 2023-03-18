@@ -40,6 +40,8 @@ def prune_parse_arguments(parser):
                     help="number of bit of quantized weights")
     parser.add_argument('--retrain-quantized-method', type=str, default='minmax_uniform_symmetric',
                     help="quantization method")
+    parser.add_argument("--retrain-quantized-method-factor", type=float, default=25,
+                        help="when using std scaled range for quantization")
 
 class Retrain(object):
     def __init__(self, args, model, logger=None, pre_defined_mask=None, seed=None):
@@ -173,7 +175,7 @@ class Retrain(object):
                     elif method == 'stdscaled_uniform_symmetric':
                         sign = torch.sign(W)
                         std = torch.std(W)
-                        factor = 25.0
+                        factor = self.args.retrain_quantized_method_factor
                         scale = torch.min(torch.max(torch.abs(W)), std * factor)
                         WS = torch.abs(W) / scale
                         WS = torch.clamp(WS,0,1)
